@@ -1,0 +1,159 @@
+from boltiot import Bolt, Sms, Email
+import json,time,conf,math,statistics
+
+def compute_bounds(history_data,frame_size,factor):
+    if len(history_data)<frame_size :
+        return None
+
+    if len(history_data)>frame_size :
+        del history_data[0:len(history_data)-frame_size]
+    Mn=statistics.mean(history_data)
+    Variance=0
+    for data in history_data :
+        Variance += math.pow((data-Mn),2)
+    Zn = factor * math.sqrt(Variance / frame_size)
+    High_bound = history_data[frame_size-1]+Zn
+    Low_bound = history_data[frame_size-1]-Zn
+    return [High_bound,Low_bound]
+
+def compute_limits(history_data,frame_size):
+    if len(history_data)<frame_size :
+        return None
+
+    if len(history_data)>frame_size :
+        del history_data[0:len(history_data)-frame_size]
+
+    top=max(history_data)
+    bottom=min(history_data)
+    return [top,bottom]
+
+
+mybolt = Bolt(conf.API_KEY, conf.DEVICE_ID)
+sms = Sms(conf.SID, conf.AUTH_TOKEN, conf.TO_NUMBER, conf.FROM_NUMBER)
+history_data=[]
+a=1
+print("Welcome to our Product")
+choice=int(input("Enter 1 to work with a simple temprature monitor and 2 to work with anomaly detection "))
+
+if choice==2:
+    
+    while True:
+        response = mybolt.analogRead('A0')
+        data = json.loads(response)
+        if data['success'] != 1:
+            print("There was an error while retriving the data.")
+            print("This is the error:"+data['value'])
+            time.sleep(10)
+            continue
+        temp=(100*int(data['value']))/1024
+        print ("This is the value ",temp)
+        sensor_value=0
+        try:
+            sensor_value = int(data['value'])
+        except e:
+            print("There was an error while parsing the response: ",e)
+            continue
+
+        bound = compute_bounds(history_data,conf.FRAME_SIZE,conf.MUL_FACTOR)
+        if not bound:
+            required_data_count=conf.FRAME_SIZE-len(history_data)
+            print("Not enough data to compute Z-score. Need ",required_data_count," more data points")
+            history_data.append(int(data['value']))
+            time.sleep(10)
+            continue
+
+        try:
+            
+            if sensor_value > bound[0] :
+                print ("The Temprature increased suddenly. Sending an SMS.")
+                response = sms.send_sms("The temprature has increased sharply")
+                print("This is the response ",response)
+            elif sensor_value < bound[1]:
+                print ("The temprature decreased suddenly. Sending an SMS.")
+                response = sms.send_sms("the temprature has decreased sharply")
+                print("This is the response ",response)
+            history_data.append(sensor_value);
+        except Exception as e:
+            print ("Error",e)
+        time.sleep(10)
+else:
+    option=int(input("Press 1 to set your own limits or 2 to let machine decide the upper and lower limit "))
+    if option==1:
+        upper=int(input("Enter upper limit in Degree celsius "))
+        lower=int(input("Enter lower limit in Degree celsius "))
+        while True:
+            response = mybolt.analogRead('A0')
+            data = json.loads(response)
+            if data['success'] != 1:
+                print("There was an error while retriving the data.")
+                print("This is the error:"+data['value'])
+                time.sleep(10)
+                continue
+
+            temp=(100*int(data['value']))/1024
+            print ("This is the value ",temp)
+            sensor_value=0
+            try:
+                sensor_value = int(data['value'])
+            except e:
+                print("There was an error while parsing the response: ",e)
+                continue
+            
+            try:
+                if temp>upper:
+                        print("The upper limit has been comprimised")
+                        response = sms.send_sms("The temprature has crossed the upper limit")
+                        print("This is the response ",response)
+                elif temp<lower:
+                    print("The lower limit has been comprimised")
+                    response = sms.send_sms("The temprature has crossed the lower limit")
+                    print("This is the response ",response)
+            except Exception as e:
+                print ("Error",e)
+            time.sleep(10)
+               
+        
+    else:
+        max=0
+        min=0
+        while True:
+            response = mybolt.analogRead('A0')
+            data = json.loads(response)
+            if data['success'] != 1:
+                print("There was an error while retriving the data.")
+                print("This is the error:"+data['value'])
+                time.sleep(10)
+                continue
+
+            temp=(100*int(data['value']))/1024
+            print ("This is the value ",temp)
+            sensor_value=0
+            try:
+                sensor_value = int(data['value'])
+            except e:
+                print("There was an error while parsing the response: ",e)
+                continue
+            limit = compute_limits(history_data,conf.FRAME_SIZE)
+            if not limit:
+                required_data_count=conf.FRAME_SIZE-len(history_data)
+                print("Not enough data to compute Limits. Need ",required_data_count," more data points")
+                history_data.append(int(data['value']))
+                time.sleep(10)
+                continue
+            if a==1:
+                print("The Maximum limit will be "+(limit[0]+30))
+                print("The Minimum limit will be "+(limit[1]-30))
+                a=0
+            try:
+                if sensor_value>(limit[0]+30):
+                    print("The upper limit has been comprimised")
+                    response = sms.send_sms("The temprature has crossed the upper limit")
+                    print("This is the response ",response)
+                elif sensor_value<(limit[1]-30):
+                    print("The lower limit has been comprimised")
+                    response = sms.send_sms("The temprature has crossed the lower limit")
+                    print("This is the response ",response)
+            except Exception as e:
+                print ("Error",e)
+            time.sleep(10)
+
